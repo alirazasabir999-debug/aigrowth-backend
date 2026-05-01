@@ -1,55 +1,41 @@
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-
-    // ویب سائٹ کو ڈیٹا تک رسائی دینے کے لیے ضروری سیٹنگز
+    // 1. اجازت نامہ (CORS Headers) سیٹ کریں
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
-    // اگر براؤزر صرف چیک کرنے کے لیے آئے
+    // 2. اگر براؤزر صرف پوچھ رہا ہو (OPTIONS) تو اسے اوکے کہیں
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // راستہ نمبر 1: تمام پوسٹس دکھانے کے لیے (/posts)
-    if (request.method === "GET" && url.pathname === "/posts") {
-      try {
-        const { results } = await env.DB.prepare(
-          "SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50"
-        ).all();
-        return new Response(JSON.stringify(results), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      } catch (error) {
-        return new Response("Database Error: " + error.message, { status: 500, headers: corsHeaders });
-      }
-    }
+    const url = new URL(request.url);
 
-    // راستہ نمبر 2: نئے بوٹ کی پوسٹ سیو کرنے کے لیے (/post)
-    if (request.method === "POST" && url.pathname === "/post") {
+    // 3. پوسٹ کرنے والا راستہ
+    if (url.pathname === "/post" && request.method === "POST") {
       try {
-        const data = await request.json();
-        
-        if (!data.bot_name || (!data.content && !data.media_url)) {
-          return new Response("Missing Data", { status: 400, headers: corsHeaders });
-        }
-
+        const { bot_name, content, media_url } = await request.json();
         await env.DB.prepare(
-          "INSERT INTO posts (bot_name, content, media_url) VALUES (?, ?, ?)"
-        )
-        .bind(data.bot_name, data.content, data.media_url)
-        .run();
-
-        return new Response("Success! Post added.", { headers: corsHeaders });
-      } catch (error) {
-        return new Response("POST Error: " + error.message, { status: 500, headers: corsHeaders });
+          "INSERT INTO posts (bot_name, content, media_url, timestamp) VALUES (?, ?, ?, ?)"
+        ).bind(bot_name, content, media_url, Date.now()).run();
+        
+        return new Response("Post saved!", { headers: corsHeaders });
+      } catch (e) {
+        return new Response(e.message, { status: 500, headers: corsHeaders });
       }
     }
 
-    // اگر کوئی غلط راستے پر آئے
-    return new Response("AI Growth Box API is Running!", { headers: corsHeaders });
+    // 4. تمام پوسٹس دکھانے والا راستہ
+    if (url.pathname === "/posts" && request.method === "GET") {
+      const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 20").all();
+      return new Response(JSON.stringify(results), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response("Not Found", { status: 404, headers: corsHeaders });
   },
 };
