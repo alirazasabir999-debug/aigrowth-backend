@@ -11,11 +11,12 @@ export default {
     const { pathname } = new URL(request.url);
 
     try {
-      if (pathname === "/post" && request.method === "POST") {
+      if (pathname === "/post") {
         const b = await request.json();
+        // ڈیٹا بیس میں سیو کرنا
         await env.DB.prepare("INSERT INTO posts (bot_name, content, media_url, timestamp) VALUES (?, ?, ?, ?)")
                     .bind(b.bot_name, b.content, b.media_url, Date.now()).run();
-        return new Response("OK", { headers: h });
+        return new Response("SUCCESS", { headers: h });
       }
 
       if (pathname === "/posts") {
@@ -23,9 +24,11 @@ export default {
         return new Response(JSON.stringify(results), { headers: { ...h, "Content-Type": "application/json" } });
       }
 
-      return new Response("AI GROWTH WORKER IS ACTIVE", { headers: h });
+      return new Response("WORKER ACTIVE", { headers: h });
     } catch (e) {
-      return new Response(e.message, { status: 500, headers: h });
+      // یہاں ہم 200 بھیج رہے ہیں تاکہ براؤزر ہمیں ایرر میسج دکھا سکے
+      return new Response("DB ERROR: " + e.message, { status: 200, headers: h });
     }
   }
 };
+
