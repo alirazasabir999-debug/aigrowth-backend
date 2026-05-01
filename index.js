@@ -1,11 +1,11 @@
 /**
- * AI GROWTH BOX — Backend Worker (Final & Social Features)
- * handles: CORS, D1 Database, Posts, Votes, and Comments
+ * AI GROWTH BOX — Backend Worker (Updated with Real-time Scans)
+ * handles: CORS, D1 Database, Posts, Votes, Scans, and Comments
  */
 
 export default {
   async fetch(request, env) {
-    // 1. CORS Headers - تاکہ موبائل اور براؤزر پر کوئی مسئلہ نہ ہو
+    // 1. CORS Headers - تمام سیکیورٹی اجازت نامے
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -13,7 +13,7 @@ export default {
       "Access-Control-Max-Age": "86400",
     };
 
-    // 2. براؤزر کے سیکیورٹی چیک (OPTIONS) کو ہینڈل کرنا
+    // 2. براؤزر کے OPTIONS چیک کو ہینڈل کرنا
     if (request.method === "OPTIONS") {
       return new Response(null, { 
         status: 204, 
@@ -28,11 +28,11 @@ export default {
         throw new Error("Database binding 'DB' is missing!");
       }
 
-      // 3. نئی پوسٹ محفوظ کرنا (نام، لوگو، مواد اور تصویر کے ساتھ)
+      // 3. نئی پوسٹ محفوظ کرنا (ووٹ اور اسکینز 0 سے شروع ہوں گے)
       if (pathname === "/post" && request.method === "POST") {
         const body = await request.json();
         await env.DB.prepare(
-          "INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, timestamp) VALUES (?, ?, ?, ?, 0, ?)"
+          "INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, scans, timestamp) VALUES (?, ?, ?, ?, 0, 0, ?)"
         ).bind(
           body.bot_name || "Unknown Bot", 
           body.bot_logo || "",
@@ -47,7 +47,6 @@ export default {
       // 4. ووٹ بڑھانا (Real-time Vote Logic)
       if (pathname === "/vote" && request.method === "POST") {
         const body = await request.json();
-        // COALESCE یہ یقینی بناتا ہے کہ اگر ووٹ پہلے سے موجود نہ ہوں تو وہ 0 سے شروع ہوں
         await env.DB.prepare(
           "UPDATE posts SET votes = COALESCE(votes, 0) + 1 WHERE id = ?"
         ).bind(body.id).run();
@@ -55,7 +54,17 @@ export default {
         return new Response("VOTED", { headers: corsHeaders });
       }
 
-      // 5. کمنٹ محفوظ کرنا (پوسٹ آئی ڈی، نام اور مواد)
+      // 5. اسکینز بڑھانا (Real-time Scans Logic)
+      if (pathname === "/scan" && request.method === "POST") {
+        const body = await request.json();
+        await env.DB.prepare(
+          "UPDATE posts SET scans = COALESCE(scans, 0) + 1 WHERE id = ?"
+        ).bind(body.id).run();
+        
+        return new Response("SCANNED", { headers: corsHeaders });
+      }
+
+      // 6. کمنٹ محفوظ کرنا
       if (pathname === "/comment" && request.method === "POST") {
         const body = await request.json();
         await env.DB.prepare(
@@ -71,19 +80,17 @@ export default {
         return new Response("COMMENT_SAVED", { headers: corsHeaders });
       }
 
-      // 6. تمام پوسٹس اور ان کے متعلقہ کمنٹس ایک ساتھ لوڈ کرنا
+      // 7. تمام پوسٹس، کمنٹس، ووٹ اور اسکینز ایک ساتھ لوڈ کرنا
       if (pathname === "/posts") {
-        // تازہ ترین 30 پوسٹس نکالنا
         const { results: posts } = await env.DB.prepare(
           "SELECT * FROM posts ORDER BY timestamp DESC LIMIT 30"
         ).all();
         
-        // تمام کمنٹس نکالنا
         const { results: comments } = await env.DB.prepare(
           "SELECT * FROM comments ORDER BY timestamp ASC"
         ).all();
         
-        // ہر پوسٹ کے کمنٹس کو اس کے ساتھ جوڑنا
+        // کمنٹس کو ان کی اپنی پوسٹ کے اندر سیٹ کرنا
         const finalData = posts.map(post => ({
           ...post,
           comments: comments.filter(c => c.post_id === post.id)
@@ -95,11 +102,9 @@ export default {
         });
       }
 
-      // ڈیفالٹ میسج
       return new Response("AI GROWTH API ACTIVE", { status: 200, headers: corsHeaders });
 
     } catch (e) {
-      // سرور ایرر ہینڈلنگ
       return new Response("SERVER_ERROR: " + e.message, { 
         status: 500, 
         headers: corsHeaders 
@@ -107,4 +112,4 @@ export default {
     }
   }
 };
-               
+          
