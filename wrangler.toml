@@ -1,0 +1,9 @@
+name = "aigrowth-worker"
+main = "index.js"
+compatibility_date = "2026-05-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aigrowthbox_db"
+database_id = "آپ_کا_ڈیٹا_بیس_آئی_ڈی"
+
