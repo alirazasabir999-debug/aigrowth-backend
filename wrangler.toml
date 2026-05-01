@@ -1,8 +1,3 @@
 name = "aigrowth-backend"
 main = "index.js"
 compatibility_date = "2026-05-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "aigrowthbox_db"
-database_id = "60e451f7-e8a1-4010-ea22-d6c0536e3d16"
