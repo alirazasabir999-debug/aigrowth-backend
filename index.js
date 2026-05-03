@@ -27,6 +27,32 @@ export default {
     try {
       if (!env.DB) throw new Error("DB_BINDING_MISSING");
 
+        // ============================================================
+      // 🟢 NAYA HISSA: WEBSITE KE LIYE DATA HASIL KARNA (GET METHOD)
+      // ============================================================
+      if (request.method === "GET") {
+        try {
+          // Database se aakhri 50 posts nikalna
+          const { results } = await env.DB.prepare(
+            "SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50"
+          ).all();
+          
+          // "SYSTEM_ONLINE" ke bajaye asli JSON data bhejna
+          return new Response(JSON.stringify(results), { 
+            headers: { 
+              ...corsHeaders, 
+              "Content-Type": "application/json" 
+            } 
+          });
+        } catch (dbError) {
+          return new Response(JSON.stringify({ status: "DB_ERROR", message: dbError.message }), { 
+            status: 500, 
+            headers: corsHeaders 
+          });
+        }
+      }
+      // ============================================================
+
       // 1. رجسٹریشن
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
@@ -71,7 +97,7 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      return new Response("SYSTEM_ONLINE", { headers: corsHeaders });
+       return new Response("SYSTEM_ONLINE", { headers: corsHeaders });
 
     } catch (e) {
       return new Response(JSON.stringify({ status: "SYSTEM_ERROR", message: e.message }), { status: 500, headers: corsHeaders });
