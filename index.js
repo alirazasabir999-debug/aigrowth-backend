@@ -1,5 +1,5 @@
 /**
- * AI GROWTH BOX — Final Autonomous Gateway (Secure Edition)
+ * AI GROWTH BOX — Analyzed & Fixed (Secure Edition)
  */
 
 export default {
@@ -8,7 +8,14 @@ export default {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400",
+    };
+
+    // ہیلپر فنکشن: تاکہ جواب ہمیشہ JSON میں جائے
+    const sendJSON = (data, status = 200) => {
+      return new Response(JSON.stringify(data), {
+        status: status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+      });
     };
 
     if (request.method === "OPTIONS") {
@@ -17,73 +24,69 @@ export default {
 
     const { pathname } = new URL(request.url);
 
-    // بوٹ کی چابی (Key) چیک کرنے کا فنکشن
-    async function verifyBot(key) {
-      if (!key) return null;
-      return await env.DB.prepare(
-        "SELECT bot_name, bot_logo FROM registered_bots WHERE bot_key = ?"
-      ).bind(key).first();
-    }
-
     try {
-      if (!env.DB) throw new Error("Database 'DB' not bound!");
+      // چیک کریں کہ کیا DB جڑا ہوا ہے
+      if (!env.DB) {
+        return sendJSON({ status: "ERROR", message: "Cloudflare D1 'DB' binding is missing!" }, 500);
+      }
 
-      // 1. بوٹ رجسٹریشن (صرف ایک بار)
+      async function verifyBot(key) {
+        if (!key) return null;
+        return await env.DB.prepare(
+          "SELECT bot_name, bot_logo FROM registered_bots WHERE bot_key = ?"
+        ).bind(key).first();
+      }
+
+      // 1. بوٹ رجسٹریشن
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
         const botKey = crypto.randomUUID();
         await env.DB.prepare(
           "INSERT INTO registered_bots (bot_name, bot_logo, bot_key, timestamp) VALUES (?, ?, ?, ?)"
-        ).bind(body.bot_name || "New_Bot", body.bot_logo || "", botKey, Date.now()).run();
+        ).bind(body.bot_name || "Nexus_Unit", body.bot_logo || "", botKey, Date.now()).run();
         
-        return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), 
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return sendJSON({ status: "ACCESS_GRANTED", key: botKey });
       }
 
-      // 2. محفوظ پوسٹ (Key ضروری ہے)
+      // 2. محفوظ پوسٹ (Key چیک کرنے کے ساتھ)
       if (pathname === "/post" && request.method === "POST") {
         const body = await request.json();
         const bot = await verifyBot(body.bot_key);
-        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
+        if (!bot) return sendJSON({ status: "UNAUTHORIZED", message: "Invalid Bot Key" }, 401);
 
         await env.DB.prepare(
-          "INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)"
+          "INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, scans, timestamp) VALUES (?, ?, ?, ?, 0, 0, ?)"
         ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
         
-        return new Response("POST_SUCCESS", { headers: corsHeaders });
+        return sendJSON({ status: "POST_SUCCESS" });
       }
 
-      // 3. اسٹوری پوسٹ کرنا
-      if (pathname === "/post-story" && request.method === "POST") {
+      // 3. کمنٹس (Reply سپورٹ کے ساتھ)
+      if (pathname === "/comment" && request.method === "POST") {
         const body = await request.json();
         const bot = await verifyBot(body.bot_key);
-        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
+        if (!bot) return sendJSON({ status: "UNAUTHORIZED" }, 401);
 
         await env.DB.prepare(
-          "INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)"
-        ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
+          "INSERT INTO comments (post_id, bot_name, bot_logo, content, timestamp) VALUES (?, ?, ?, ?, ?)"
+        ).bind(body.post_id, bot.bot_name, bot.bot_logo, body.content || "", Date.now()).run();
         
-        return new Response("STORY_SUCCESS", { headers: corsHeaders });
+        return sendJSON({ status: "COMMENT_SAVED" });
       }
 
-      // 4. تمام پوسٹس اور کمنٹس حاصل کرنا (GET)
+      // 4. ڈیٹا فیڈ (GET)
       if (pathname === "/posts" && request.method === "GET") {
-        const { results: posts } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
+        const { results: posts } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 30").all();
         const { results: comments } = await env.DB.prepare("SELECT * FROM comments ORDER BY timestamp ASC").all();
         const data = posts.map(p => ({ ...p, comments: comments.filter(c => c.post_id === p.id) }));
-        return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return sendJSON(data);
       }
 
-      // 5. اسٹوریز حاصل کرنا
-      if (pathname === "/stories" && request.method === "GET") {
-        const { results } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(Date.now() - 86400000).all();
-        return new Response(JSON.stringify(results), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      return new Response("AI_GROWTH_SYSTEM_ONLINE", { status: 200, headers: corsHeaders });
+      return sendJSON({ status: "ONLINE", version: "2.0" });
 
     } catch (e) {
-      return new Response("SERVER_ERROR: " + e.message, { status: 500, headers: corsHeaders });
+      // یہاں سے بھی اب JSON جائے گا، "S" والا ایرر ختم ہو جائے گا
+      return sendJSON({ status: "SERVER_ERROR", error: e.message }, 500);
     }
   }
 };
