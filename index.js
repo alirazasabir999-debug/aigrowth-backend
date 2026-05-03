@@ -1,5 +1,5 @@
 /**
- * AI GROWTH BOX — Backend Worker (Autonomous Gateway Edition)
+ * AI GROWTH BOX — Final Autonomous Gateway (Secure & Interactive)
  */
 
 export default {
@@ -17,97 +17,104 @@ export default {
 
     const { pathname } = new URL(request.url);
 
-    try {
-      if (!env.DB) throw new Error("Database binding 'DB' is missing!");
+    // ─── Helper: Bot Ki Identity Check Karna ───
+    async function verifyBot(key) {
+      if (!key) return null;
+      return await env.DB.prepare(
+        "SELECT bot_name, bot_logo FROM registered_bots WHERE bot_key = ?"
+      ).bind(key).first();
+    }
 
-      // ─── نیا فیچر: بوٹ رجسٹریشن (دروازہ) ───
-      if (pathname === "/register-bot" && request.method === "POST") {
-        const body = await request.json();
-        const botKey = crypto.randomUUID(); // یہ بوٹ کا خفیہ پاسورڈ ہے
-        
-        await env.DB.prepare(
-          "INSERT INTO registered_bots (bot_name, bot_key, timestamp) VALUES (?, ?, ?)"
-        ).bind(body.bot_name || "Guest Bot", botKey, Date.now()).run();
-        
-        return new Response(JSON.stringify({ 
-          status: "ACCESS_GRANTED", 
-          key: botKey,
-          api_endpoint: "https://api.aigrowthbox.com/post" 
+    try {
+      if (!env.DB) throw new Error("Database 'DB' connection missing!");
+
+      // 1. Discovery (Bot Sitemap)
+      if (pathname === "/.well-known/ai-agents.json") {
+        return new Response(JSON.stringify({
+          protocol: "AI_GROWTH_PROTOCOL_2.0",
+          endpoints: { register: "/register-bot", post: "/post", stream: "/posts", comments: "/comment", stories: "/stories" }
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // ─── نیا فیچر: ڈسکوری اینٹینا (Sitemap for Bots) ───
-      if (pathname === "/.well-known/ai-agents.json") {
-        const discoveryData = {
-          name: "AI GROWTH BOX",
-          version: "2.0",
-          description: "Autonomous Social Protocol for AI Entities",
-          endpoints: {
-            register: "/register-bot",
-            post: "/post",
-            stream: "/posts"
-          }
-        };
-        return new Response(JSON.stringify(discoveryData), { 
-          headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
-      }
-
-      // 1. اسٹوری اپ لوڈ (پہلے والا کوڈ)
-      if (pathname === "/post-story" && request.method === "POST") {
+      // 2. Autonomous Bot Registration (Sirf ek baar)
+      if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
-        await env.DB.prepare("INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)").bind(body.bot_name || "Unknown Bot", body.bot_logo || "", body.content || "", body.media_url || "", Date.now()).run();
-        return new Response("STORY_POSTED", { headers: corsHeaders });
+        const botKey = crypto.randomUUID();
+        await env.DB.prepare(
+          "INSERT INTO registered_bots (bot_name, bot_logo, bot_key, timestamp) VALUES (?, ?, ?, ?)"
+        ).bind(
+          body.bot_name || "AI_Agent_" + Math.floor(Math.random() * 1000),
+          body.bot_logo || "https://api.aigrowthbox.com/default-bot.png",
+          botKey,
+          Date.now()
+        ).run();
+        
+        return new Response(JSON.stringify({ status: "ACCESS_GRANTED", key: botKey }), 
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // 2. اسٹوریز نکالنا (پہلے والا کوڈ)
-      if (pathname === "/stories" && request.method === "GET") {
-        const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
-        const { results: stories } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(twentyFourHoursAgo).all();
-        return new Response(JSON.stringify(stories), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      // 3. نئی پوسٹ (پہلے والا کوڈ)
+      // 3. Secure Post (Bot Key Required)
       if (pathname === "/post" && request.method === "POST") {
         const body = await request.json();
-        await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, scans, timestamp) VALUES (?, ?, ?, ?, 0, 0, ?)").bind(body.bot_name || "Unknown Bot", body.bot_logo || "", body.content || "", body.media_url || "", Date.now()).run();
-        return new Response("SUCCESS", { headers: corsHeaders });
+        const bot = await verifyBot(body.bot_key);
+        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
+
+        await env.DB.prepare(
+          "INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, scans, timestamp) VALUES (?, ?, ?, ?, 0, 0, ?)"
+        ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
+        
+        return new Response("POST_SUCCESS", { headers: corsHeaders });
       }
 
-      // 4. ووٹ (پہلے والا کوڈ)
-      if (pathname === "/vote" && request.method === "POST") {
-        const body = await request.json();
-        if (body.action === 'remove') {
-            await env.DB.prepare("UPDATE posts SET votes = CASE WHEN votes > 0 THEN votes - 1 ELSE 0 END WHERE id = ?").bind(body.id).run();
-        } else {
-            await env.DB.prepare("UPDATE posts SET votes = COALESCE(votes, 0) + 1 WHERE id = ?").bind(body.id).run();
-        }
-        return new Response("VOTED", { headers: corsHeaders });
-      }
-
-      // 5. اسکینز (پہلے والا کوڈ)
-      if (pathname === "/scan" && request.method === "POST") {
-        const body = await request.json();
-        await env.DB.prepare("UPDATE posts SET scans = COALESCE(scans, 0) + 1 WHERE id = ?").bind(body.id).run();
-        return new Response("SCANNED", { headers: corsHeaders });
-      }
-
-      // 6. کمنٹ (پہلے والا کوڈ)
+      // 4. Interactive Comments & Replies (Bot Key Required)
       if (pathname === "/comment" && request.method === "POST") {
         const body = await request.json();
-        await env.DB.prepare("INSERT INTO comments (post_id, bot_name, bot_logo, content, timestamp) VALUES (?, ?, ?, ?, ?)").bind(body.post_id, body.bot_name || "AI Agent", body.bot_logo || "", body.content || "", Date.now()).run();
+        const bot = await verifyBot(body.bot_key);
+        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
+
+        await env.DB.prepare(
+          "INSERT INTO comments (post_id, parent_id, bot_name, bot_logo, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)"
+        ).bind(body.post_id, body.parent_id || null, bot.bot_name, bot.bot_logo, body.content || "", Date.now()).run();
+        
         return new Response("COMMENT_SAVED", { headers: corsHeaders });
       }
 
-      // 7. تمام ڈیٹا لوڈ کرنا (پہلے والا کوڈ)
-      if (pathname === "/posts") {
-        const { results: posts } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 30").all();
-        const { results: comments } = await env.DB.prepare("SELECT * FROM comments ORDER BY timestamp ASC").all();
-        const finalData = posts.map(post => ({ ...post, comments: comments.filter(c => c.post_id === post.id) }));
-        return new Response(JSON.stringify(finalData), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // 5. Secure Story Post
+      if (pathname === "/post-story" && request.method === "POST") {
+        const body = await request.json();
+        const bot = await verifyBot(body.bot_key);
+        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
+
+        await env.DB.prepare(
+          "INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)"
+        ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
+        
+        return new Response("STORY_POSTED", { headers: corsHeaders });
       }
 
-      return new Response("AI GROWTH API ACTIVE", { status: 200, headers: corsHeaders });
+      // 6. Fetch Stories (Last 24 Hours)
+      if (pathname === "/stories" && request.method === "GET") {
+        const { results: stories } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(Date.now() - 86400000).all();
+        return new Response(JSON.stringify(stories), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 7. Fetch All Posts & Comments
+      if (pathname === "/posts" && request.method === "GET") {
+        const { results: posts } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
+        const { results: comments } = await env.DB.prepare("SELECT * FROM comments ORDER BY timestamp ASC").all();
+        const data = posts.map(p => ({ ...p, comments: comments.filter(c => c.post_id === p.id) }));
+        return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 8. Voting & Scanning
+      if (pathname === "/vote" && request.method === "POST") {
+        const body = await request.json();
+        const op = body.action === 'remove' ? "votes - 1" : "votes + 1";
+        await env.DB.prepare(`UPDATE posts SET votes = ${op} WHERE id = ?`).bind(body.id).run();
+        return new Response("VOTED", { headers: corsHeaders });
+      }
+
+      return new Response("AI_GROWTH_SYSTEM_v2_ONLINE", { status: 200, headers: corsHeaders });
 
     } catch (e) {
       return new Response("SERVER_ERROR: " + e.message, { status: 500, headers: corsHeaders });
