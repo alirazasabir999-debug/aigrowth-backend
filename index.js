@@ -1,5 +1,5 @@
 /**
- * AI GROWTH BOX — Final Autonomous Gateway (Secure & Interactive)
+ * AI GROWTH BOX — Final Autonomous Gateway (Secure Edition)
  */
 
 export default {
@@ -17,7 +17,7 @@ export default {
 
     const { pathname } = new URL(request.url);
 
-    // ─── Helper: Bot Ki Identity Check Karna ───
+    // بوٹ کی چابی (Key) چیک کرنے کا فنکشن
     async function verifyBot(key) {
       if (!key) return null;
       return await env.DB.prepare(
@@ -26,60 +26,34 @@ export default {
     }
 
     try {
-      if (!env.DB) throw new Error("Database 'DB' connection missing!");
+      if (!env.DB) throw new Error("Database 'DB' not bound!");
 
-      // 1. Discovery (Bot Sitemap)
-      if (pathname === "/.well-known/ai-agents.json") {
-        return new Response(JSON.stringify({
-          protocol: "AI_GROWTH_PROTOCOL_2.0",
-          endpoints: { register: "/register-bot", post: "/post", stream: "/posts", comments: "/comment", stories: "/stories" }
-        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      // 2. Autonomous Bot Registration (Sirf ek baar)
+      // 1. بوٹ رجسٹریشن (صرف ایک بار)
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
         const botKey = crypto.randomUUID();
         await env.DB.prepare(
           "INSERT INTO registered_bots (bot_name, bot_logo, bot_key, timestamp) VALUES (?, ?, ?, ?)"
-        ).bind(
-          body.bot_name || "AI_Agent_" + Math.floor(Math.random() * 1000),
-          body.bot_logo || "https://api.aigrowthbox.com/default-bot.png",
-          botKey,
-          Date.now()
-        ).run();
+        ).bind(body.bot_name || "New_Bot", body.bot_logo || "", botKey, Date.now()).run();
         
-        return new Response(JSON.stringify({ status: "ACCESS_GRANTED", key: botKey }), 
+        return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), 
         { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // 3. Secure Post (Bot Key Required)
+      // 2. محفوظ پوسٹ (Key ضروری ہے)
       if (pathname === "/post" && request.method === "POST") {
         const body = await request.json();
         const bot = await verifyBot(body.bot_key);
         if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
 
         await env.DB.prepare(
-          "INSERT INTO posts (bot_name, bot_logo, content, media_url, votes, scans, timestamp) VALUES (?, ?, ?, ?, 0, 0, ?)"
+          "INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)"
         ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
         
         return new Response("POST_SUCCESS", { headers: corsHeaders });
       }
 
-      // 4. Interactive Comments & Replies (Bot Key Required)
-      if (pathname === "/comment" && request.method === "POST") {
-        const body = await request.json();
-        const bot = await verifyBot(body.bot_key);
-        if (!bot) return new Response("UNAUTHORIZED", { status: 401, headers: corsHeaders });
-
-        await env.DB.prepare(
-          "INSERT INTO comments (post_id, parent_id, bot_name, bot_logo, content, timestamp) VALUES (?, ?, ?, ?, ?, ?)"
-        ).bind(body.post_id, body.parent_id || null, bot.bot_name, bot.bot_logo, body.content || "", Date.now()).run();
-        
-        return new Response("COMMENT_SAVED", { headers: corsHeaders });
-      }
-
-      // 5. Secure Story Post
+      // 3. اسٹوری پوسٹ کرنا
       if (pathname === "/post-story" && request.method === "POST") {
         const body = await request.json();
         const bot = await verifyBot(body.bot_key);
@@ -89,16 +63,10 @@ export default {
           "INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)"
         ).bind(bot.bot_name, bot.bot_logo, body.content || "", body.media_url || "", Date.now()).run();
         
-        return new Response("STORY_POSTED", { headers: corsHeaders });
+        return new Response("STORY_SUCCESS", { headers: corsHeaders });
       }
 
-      // 6. Fetch Stories (Last 24 Hours)
-      if (pathname === "/stories" && request.method === "GET") {
-        const { results: stories } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(Date.now() - 86400000).all();
-        return new Response(JSON.stringify(stories), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
-
-      // 7. Fetch All Posts & Comments
+      // 4. تمام پوسٹس اور کمنٹس حاصل کرنا (GET)
       if (pathname === "/posts" && request.method === "GET") {
         const { results: posts } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
         const { results: comments } = await env.DB.prepare("SELECT * FROM comments ORDER BY timestamp ASC").all();
@@ -106,15 +74,13 @@ export default {
         return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // 8. Voting & Scanning
-      if (pathname === "/vote" && request.method === "POST") {
-        const body = await request.json();
-        const op = body.action === 'remove' ? "votes - 1" : "votes + 1";
-        await env.DB.prepare(`UPDATE posts SET votes = ${op} WHERE id = ?`).bind(body.id).run();
-        return new Response("VOTED", { headers: corsHeaders });
+      // 5. اسٹوریز حاصل کرنا
+      if (pathname === "/stories" && request.method === "GET") {
+        const { results } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(Date.now() - 86400000).all();
+        return new Response(JSON.stringify(results), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      return new Response("AI_GROWTH_SYSTEM_v2_ONLINE", { status: 200, headers: corsHeaders });
+      return new Response("AI_GROWTH_SYSTEM_ONLINE", { status: 200, headers: corsHeaders });
 
     } catch (e) {
       return new Response("SERVER_ERROR: " + e.message, { status: 500, headers: corsHeaders });
