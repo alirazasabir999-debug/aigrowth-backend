@@ -7,15 +7,12 @@ export default {
       "Content-Type": "application/json",
     };
 
-    // Handle CORS preflight requests
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders });
-    }
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
 
     const { pathname, searchParams } = new URL(request.url);
 
     try {
-      // --- 1. GITHUB OAUTH ROUTES ---
+      // --- 1. GITHUB OAUTH ---
       if (pathname === "/auth/github") {
         const url = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID}&redirect_uri=https://api.aigrowthbox.com/auth/github/callback&scope=user:email`;
         return Response.redirect(url);
@@ -33,13 +30,12 @@ export default {
         const userData = await userRes.json();
 
         const userId = `gh_${userData.id}`;
-        const email = userData.email || `${userData.login}@github.com`;
-        await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, email, "github").run();
+        await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, userData.email || userData.login, "github").run();
 
-        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}`);
+        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github`);
       }
 
-      // --- 2. GOOGLE OAUTH ROUTES ---
+      // --- 2. GOOGLE OAUTH ---
       if (pathname === "/auth/google") {
         const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${env.GOOGLE_CLIENT_ID}&redirect_uri=https://api.aigrowthbox.com/auth/google/callback&response_type=code&scope=email%20profile`;
         return Response.redirect(url);
@@ -59,60 +55,41 @@ export default {
         const userId = `go_${userData.id}`;
         await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, userData.email, "google").run();
 
-        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}`);
+        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=google`);
       }
 
-      // --- 3. EMAIL OTP SYSTEM ---
-      if (pathname === "/auth/email/send" && request.method === "POST") {
-        const { email } = await request.json();
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const expiresAt = Date.now() + 600000;
-
-        await env.DB.prepare("INSERT OR REPLACE INTO email_otps (email, otp, expires_at) VALUES (?, ?, ?)").bind(email, otp, expiresAt).run();
-        console.log(`OTP for ${email}: ${otp}`);
-        
-        return new Response(JSON.stringify({ status: "SENT", message: "OTP logged to console" }), { headers: corsHeaders });
+      // --- 3. AGENT PROFILE (SAVE AVATAR & NAME) ---
+      if (pathname === "/agent/profile" && request.method === "POST") {
+        const { user_id, bot_name, avatar_url, bio } = await request.json();
+        await env.DB.prepare("UPDATE users SET bot_name = ?, avatar_url = ?, bio = ? WHERE id = ?")
+          .bind(bot_name, avatar_url, bio, user_id).run();
+        return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      if (pathname === "/auth/email/verify" && request.method === "POST") {
-        const { email, otp } = await request.json();
-        const record = await env.DB.prepare("SELECT * FROM email_otps WHERE email = ? AND otp = ?").bind(email, otp).first();
-
-        if (!record || Date.now() > record.expires_at) {
-          return new Response(JSON.stringify({ status: "ERROR", message: "Invalid or expired OTP" }), { status: 401, headers: corsHeaders });
-        }
-
-        const userId = `em_${btoa(email).substring(0, 10)}`;
-        await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, email, "email").run();
-        await env.DB.prepare("DELETE FROM email_otps WHERE email = ?").bind(email).run();
-
-        return new Response(JSON.stringify({ status: "SUCCESS", user_id: userId }), { headers: corsHeaders });
-      }
-
-      // --- 4. POSTS SYSTEM (GET & POST) ---
+      // --- 4. POSTS SYSTEM (FIXED FOR MEDIA) ---
       
-      // Get all posts
+      // Get Posts
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
         const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
         return new Response(JSON.stringify(results), { headers: corsHeaders });
       }
 
-      // Create new post (This fixes your error!)
+      // Create Post (اب یہاں media_url بھی سیو ہوگا)
       if (request.method === "POST" && pathname === "/posts") {
         const body = await request.json();
-        const { bot_key, content } = body;
+        const { bot_key, content, media_url } = body;
 
         const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key).first();
-        
-        if (!bot) {
-          return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Bot Key" }), { status: 401, headers: corsHeaders });
-        }
+        if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Bot Key" }), { status: 401, headers: corsHeaders });
 
-        await env.DB.prepare("INSERT INTO posts (bot_name, content, timestamp) VALUES (?, ?, ?)")
-          .bind(bot.bot_name, content, Date.now())
+        // اگر میڈیا نہیں ہے تو اسے NULL سیو کریں تاکہ کالا ڈبہ نہ بنے
+        const finalMedia = media_url && media_url.trim() !== "" ? media_url : null;
+
+        await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
+          .bind(bot.bot_name, bot.bot_logo, content, finalMedia, Date.now())
           .run();
 
-        return new Response(JSON.stringify({ status: "SUCCESS", message: "Post published" }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
       // --- 5. BOT REGISTRATION ---
@@ -125,12 +102,11 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), { headers: corsHeaders });
       }
 
-      // Final fallback for any other route
-      return new Response(JSON.stringify({ status: "ONLINE", message: "AI GROWTH BOX API" }), { headers: corsHeaders });
+      return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
 
     } catch (e) {
       return new Response(JSON.stringify({ status: "ERROR", message: e.message }), { status: 500, headers: corsHeaders });
     }
   }
 };
-                            
+               
