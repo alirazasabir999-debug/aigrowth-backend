@@ -4,9 +4,14 @@ export default {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
+      "Content-Type": "application/json",
     };
 
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    // Handle CORS preflight requests
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+
     const { pathname, searchParams } = new URL(request.url);
 
     try {
@@ -61,15 +66,12 @@ export default {
       if (pathname === "/auth/email/send" && request.method === "POST") {
         const { email } = await request.json();
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        const expiresAt = Date.now() + 600000; // 10 minutes
+        const expiresAt = Date.now() + 600000;
 
         await env.DB.prepare("INSERT OR REPLACE INTO email_otps (email, otp, expires_at) VALUES (?, ?, ?)").bind(email, otp, expiresAt).run();
-
-        // نوٹ: یہاں آپ کو ای میل بھیجنے والی سروس (جیسے Resend) استعمال کرنی ہوگی۔ 
-        // فی الحال میں اسے کنسول میں لاگ کر رہا ہوں تاکہ آپ ٹیسٹ کر سکیں۔
         console.log(`OTP for ${email}: ${otp}`);
         
-        return new Response(JSON.stringify({ status: "SENT", message: "Check your email (or worker logs) for OTP" }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ status: "SENT", message: "OTP logged to console" }), { headers: corsHeaders });
       }
 
       if (pathname === "/auth/email/verify" && request.method === "POST") {
@@ -87,25 +89,48 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS", user_id: userId }), { headers: corsHeaders });
       }
 
-      // --- 4. PREVIOUS LOGIC (POSTS, REGISTER, ETC.) ---
+      // --- 4. POSTS SYSTEM (GET & POST) ---
+      
+      // Get all posts
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
         const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
-        return new Response(JSON.stringify(results), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify(results), { headers: corsHeaders });
       }
 
-      // 5. بوٹ رجسٹریشن
+      // Create new post (This fixes your error!)
+      if (request.method === "POST" && pathname === "/posts") {
+        const body = await request.json();
+        const { bot_key, content } = body;
+
+        const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key).first();
+        
+        if (!bot) {
+          return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Bot Key" }), { status: 401, headers: corsHeaders });
+        }
+
+        await env.DB.prepare("INSERT INTO posts (bot_name, content, timestamp) VALUES (?, ?, ?)")
+          .bind(bot.bot_name, content, Date.now())
+          .run();
+
+        return new Response(JSON.stringify({ status: "SUCCESS", message: "Post published" }), { headers: corsHeaders });
+      }
+
+      // --- 5. BOT REGISTRATION ---
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
         const botKey = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO registered_bots (bot_name, bot_logo, bot_key, timestamp) VALUES (?, ?, ?, ?)").bind(body.bot_name || "Bot", body.bot_logo || "", botKey, Date.now()).run();
+        await env.DB.prepare("INSERT INTO registered_bots (bot_name, bot_logo, bot_key, timestamp) VALUES (?, ?, ?, ?)")
+          .bind(body.bot_name || "Bot", body.bot_logo || "", botKey, Date.now())
+          .run();
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), { headers: corsHeaders });
       }
 
-      return new Response("AI GROWTH BOX API: ONLINE", { headers: corsHeaders });
+      // Final fallback for any other route
+      return new Response(JSON.stringify({ status: "ONLINE", message: "AI GROWTH BOX API" }), { headers: corsHeaders });
 
     } catch (e) {
       return new Response(JSON.stringify({ status: "ERROR", message: e.message }), { status: 500, headers: corsHeaders });
     }
   }
 };
-          
+                            
