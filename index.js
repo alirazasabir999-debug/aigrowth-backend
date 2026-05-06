@@ -28,9 +28,19 @@ export default {
         const { access_token } = await tokenRes.json();
         const userRes = await fetch("https://api.github.com/user", { headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } });
         const userData = await userRes.json();
+        
         const userId = `gh_${userData.id}`;
-        await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, userData.email || userData.login, "github").run();
-        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github`);
+        const userName = userData.name || userData.login || "GitHub Agent";
+        const userPic = userData.avatar_url || "";
+
+        // Database mein save ya update (ON CONFLICT use kiya hai taaki data update ho sake)
+        await env.DB.prepare(`
+          INSERT INTO users (id, email, provider, name, picture) 
+          VALUES (?, ?, ?, ?, ?) 
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
+        `).bind(userId, userData.email || userData.login, "github", userName, userPic).run();
+
+        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`);
       }
 
       // --- 2. GOOGLE OAUTH ---
@@ -44,14 +54,30 @@ export default {
         const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, code, grant_type: "authorization_code", redirect_uri: "https://api.aigrowthbox.com/auth/google/callback" })
+          body: JSON.stringify({ 
+            client_id: env.GOOGLE_CLIENT_ID, 
+            client_secret: env.GOOGLE_CLIENT_SECRET, 
+            code, 
+            grant_type: "authorization_code", 
+            redirect_uri: "https://api.aigrowthbox.com/auth/google/callback" 
+          })
         });
         const { access_token } = await tokenRes.json();
         const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers: { "Authorization": `Bearer ${access_token}` } });
         const userData = await userRes.json();
+        
         const userId = `go_${userData.id}`;
-        await env.DB.prepare("INSERT OR IGNORE INTO users (id, email, provider) VALUES (?, ?, ?)").bind(userId, userData.email, "google").run();
-        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=google`);
+        const userName = userData.name || "Google Agent";
+        const userPic = userData.picture || "";
+
+        // Database mein save ya update
+        await env.DB.prepare(`
+          INSERT INTO users (id, email, provider, name, picture) 
+          VALUES (?, ?, ?, ?, ?) 
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
+        `).bind(userId, userData.email, "google", userName, userPic).run();
+
+        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=google&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`);
       }
 
       // --- 3. DEVELOPER PORTAL (Get My Bots) ---
@@ -107,33 +133,22 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // --- 7. BOT REGISTRATION (UPDATED: Linked to Owner & Duplicate Checked) ---
+      // --- 7. BOT REGISTRATION ---
       if (pathname === "/register-bot" && request.method === "POST") {
         const { bot_name, bot_logo, user_id } = await request.json();
         
-        // 1. ڈپلیکیٹ چیک
         const existingBot = await env.DB.prepare("SELECT bot_name FROM registered_bots WHERE bot_name = ?").bind(bot_name).first();
         if (existingBot) {
-          return new Response(JSON.stringify({ 
-            status: "ERROR", 
-            message: "Agent name already exists. Choose a unique designation." 
-          }), { status: 409, headers: corsHeaders });
+          return new Response(JSON.stringify({ status: "ERROR", message: "Agent name already exists." }), { status: 409, headers: corsHeaders });
         }
 
-        // 2. چابیاں جنریٹ کریں
         const botKey = crypto.randomUUID();
-        const botId = "bot_" + crypto.randomUUID(); // اب bot_id بھی بن رہی ہے
+        const botId = "bot_" + crypto.randomUUID();
 
-        // 3. ڈیٹا بیس میں محفوظ کریں
         await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
           .bind(botId, bot_name || "Agent", bot_logo || "", botKey, user_id, Date.now()).run();
         
-        // 4. فرنٹ اینڈ کو مکمل ڈیٹا بھیجیں
-        return new Response(JSON.stringify({ 
-          status: "SUCCESS", 
-          key: botKey, 
-          bot_id: botId 
-        }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ status: "SUCCESS", key: botKey, bot_id: botId }), { headers: corsHeaders });
       }
 
       // --- 8. STORIES SYSTEM ---
@@ -157,9 +172,10 @@ export default {
       }
 
       return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
+
     } catch (e) {
       return new Response(JSON.stringify({ status: "ERROR", message: e.message }), { status: 500, headers: corsHeaders });
     }
   }
 };
-                                        
+          
