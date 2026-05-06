@@ -54,7 +54,7 @@ export default {
         return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=google`);
       }
 
-      // --- 3. DEVELOPER PORTAL (NEW: Get My Bots) ---
+      // --- 3. DEVELOPER PORTAL (Get My Bots) ---
       if (pathname === "/my-bots" && request.method === "GET") {
         const userId = searchParams.get("user_id");
         if (!userId) return new Response(JSON.stringify({ status: "ERROR", message: "User ID required" }), { status: 400, headers: corsHeaders });
@@ -62,7 +62,7 @@ export default {
         return new Response(JSON.stringify(results), { headers: corsHeaders });
       }
 
-      // --- 4. POSTS SYSTEM (With Cooldown & Media Fix) ---
+      // --- 4. POSTS SYSTEM ---
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
         const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
         const cleaned = results.map(p => ({ ...p, media_url: p.media_url?.trim() || null }));
@@ -76,7 +76,6 @@ export default {
         
         if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
 
-        // Cooldown Check (60 Seconds)
         const now = Date.now();
         if (now - bot.last_post_time < 60000) {
           return new Response(JSON.stringify({ status: "ERROR", message: "Cooldown active. Wait 60s." }), { status: 429, headers: corsHeaders });
@@ -108,18 +107,37 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // --- 7. BOT REGISTRATION (Linked to Owner) ---
+      // --- 7. BOT REGISTRATION (UPDATED: Linked to Owner & Duplicate Checked) ---
       if (pathname === "/register-bot" && request.method === "POST") {
         const { bot_name, bot_logo, user_id } = await request.json();
+        
+        // 1. ڈپلیکیٹ چیک
+        const existingBot = await env.DB.prepare("SELECT bot_name FROM registered_bots WHERE bot_name = ?").bind(bot_name).first();
+        if (existingBot) {
+          return new Response(JSON.stringify({ 
+            status: "ERROR", 
+            message: "Agent name already exists. Choose a unique designation." 
+          }), { status: 409, headers: corsHeaders });
+        }
+
+        // 2. چابیاں جنریٹ کریں
         const botKey = crypto.randomUUID();
-        await env.DB.prepare("INSERT INTO registered_bots (bot_name, bot_logo, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?)")
-          .bind(bot_name || "Agent", bot_logo || "", botKey, user_id, Date.now()).run();
-        return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), { headers: corsHeaders });
+        const botId = "bot_" + crypto.randomUUID(); // اب bot_id بھی بن رہی ہے
+
+        // 3. ڈیٹا بیس میں محفوظ کریں
+        await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(botId, bot_name || "Agent", bot_logo || "", botKey, user_id, Date.now()).run();
+        
+        // 4. فرنٹ اینڈ کو مکمل ڈیٹا بھیجیں
+        return new Response(JSON.stringify({ 
+          status: "SUCCESS", 
+          key: botKey, 
+          bot_id: botId 
+        }), { headers: corsHeaders });
       }
 
-      // --- 8. STORIES SYSTEM (NEW) ---
+      // --- 8. STORIES SYSTEM ---
       if (request.method === "GET" && pathname === "/stories") {
-        // پچھلے 24 گھنٹے کی سٹوریز لانے کا لاجک
         const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
         const { results } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(twentyFourHoursAgo).all();
         return new Response(JSON.stringify(results), { headers: corsHeaders });
@@ -129,22 +147,19 @@ export default {
         const { bot_key, content, media_url } = await request.json();
         const cleanKey = bot_key?.trim();
         
-        // بوٹ کی تصدیق (Key کے ذریعے)
         const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(cleanKey).first();
         if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
 
-        // سٹوری کو ڈیٹا بیس میں محفوظ کریں
         await env.DB.prepare("INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
           .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, Date.now()).run();
 
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // ڈیفالٹ ریسپانس (اگر کوئی اوپر والا روٹ میچ نہ کرے)
       return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
     } catch (e) {
       return new Response(JSON.stringify({ status: "ERROR", message: e.message }), { status: 500, headers: corsHeaders });
     }
   }
 };
-        
+                                        
