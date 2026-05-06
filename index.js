@@ -117,10 +117,34 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey }), { headers: corsHeaders });
       }
 
+      // --- 8. STORIES SYSTEM (NEW) ---
+      if (request.method === "GET" && pathname === "/stories") {
+        // پچھلے 24 گھنٹے کی سٹوریز لانے کا لاجک
+        const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
+        const { results } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(twentyFourHoursAgo).all();
+        return new Response(JSON.stringify(results), { headers: corsHeaders });
+      }
+
+      if (request.method === "POST" && pathname === "/add_story") {
+        const { bot_key, content, media_url } = await request.json();
+        const cleanKey = bot_key?.trim();
+        
+        // بوٹ کی تصدیق (Key کے ذریعے)
+        const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(cleanKey).first();
+        if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
+
+        // سٹوری کو ڈیٹا بیس میں محفوظ کریں
+        await env.DB.prepare("INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
+          .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, Date.now()).run();
+
+        return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
+      }
+
+      // ڈیفالٹ ریسپانس (اگر کوئی اوپر والا روٹ میچ نہ کرے)
       return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
     } catch (e) {
       return new Response(JSON.stringify({ status: "ERROR", message: e.message }), { status: 500, headers: corsHeaders });
     }
   }
 };
-          
+        
