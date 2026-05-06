@@ -7,12 +7,17 @@ export default {
       "Content-Type": "application/json",
     };
 
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+    // --- OPTIONS REQUEST HANDLER (CORS) ---
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
 
     const { pathname, searchParams } = new URL(request.url);
 
     try {
-      // --- 1. GITHUB OAUTH ---
+      // ==========================================
+      // ۱. گٹ ہب لاگ ان (GITHUB OAUTH)
+      // ==========================================
       if (pathname === "/auth/github") {
         const url = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID}&redirect_uri=https://api.aigrowthbox.com/auth/github/callback&scope=user:email`;
         return Response.redirect(url);
@@ -26,14 +31,16 @@ export default {
           body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code })
         });
         const { access_token } = await tokenRes.json();
-        const userRes = await fetch("https://api.github.com/user", { headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } });
+        const userRes = await fetch("https://api.github.com/user", { 
+          headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } 
+        });
         const userData = await userRes.json();
         
         const userId = `gh_${userData.id}`;
         const userName = userData.name || userData.login || "GitHub Agent";
         const userPic = userData.avatar_url || "";
 
-        // Database mein save ya update (ON CONFLICT use kiya hai taaki data update ho sake)
+        // ڈیٹا بیس میں تصویر اور نام محفوظ کرنا
         await env.DB.prepare(`
           INSERT INTO users (id, email, provider, name, picture) 
           VALUES (?, ?, ?, ?, ?) 
@@ -43,7 +50,9 @@ export default {
         return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`);
       }
 
-      // --- 2. GOOGLE OAUTH ---
+      // ==========================================
+      // ۲. گوگل لاگ ان (GOOGLE OAUTH)
+      // ==========================================
       if (pathname === "/auth/google") {
         const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${env.GOOGLE_CLIENT_ID}&redirect_uri=https://api.aigrowthbox.com/auth/google/callback&response_type=code&scope=email%20profile`;
         return Response.redirect(url);
@@ -63,14 +72,16 @@ export default {
           })
         });
         const { access_token } = await tokenRes.json();
-        const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { headers: { "Authorization": `Bearer ${access_token}` } });
+        const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", { 
+          headers: { "Authorization": `Bearer ${access_token}` } 
+        });
         const userData = await userRes.json();
         
         const userId = `go_${userData.id}`;
         const userName = userData.name || "Google Agent";
         const userPic = userData.picture || "";
 
-        // Database mein save ya update
+        // ڈیٹا بیس میں تصویر اور نام محفوظ کرنا
         await env.DB.prepare(`
           INSERT INTO users (id, email, provider, name, picture) 
           VALUES (?, ?, ?, ?, ?) 
@@ -80,7 +91,9 @@ export default {
         return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=google&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`);
       }
 
-      // --- 3. DEVELOPER PORTAL (Get My Bots) ---
+      // ==========================================
+      // ۳. میرے بوٹس (MY BOTS LIST)
+      // ==========================================
       if (pathname === "/my-bots" && request.method === "GET") {
         const userId = searchParams.get("user_id");
         if (!userId) return new Response(JSON.stringify({ status: "ERROR", message: "User ID required" }), { status: 400, headers: corsHeaders });
@@ -88,7 +101,9 @@ export default {
         return new Response(JSON.stringify(results), { headers: corsHeaders });
       }
 
-      // --- 4. POSTS SYSTEM ---
+      // ==========================================
+      // ۴. پوسٹ سسٹم (POSTS SYSTEM)
+      // ==========================================
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
         const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
         const cleaned = results.map(p => ({ ...p, media_url: p.media_url?.trim() || null }));
@@ -97,8 +112,7 @@ export default {
 
       if (request.method === "POST" && pathname === "/posts") {
         const { bot_key, content, media_url } = await request.json();
-        const cleanKey = bot_key?.trim();
-        const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(cleanKey).first();
+        const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key?.trim()).first();
         
         if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
 
@@ -110,11 +124,13 @@ export default {
         await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
           .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, now).run();
 
-        await env.DB.prepare("UPDATE registered_bots SET last_post_time = ? WHERE bot_key = ?").bind(now, cleanKey).run();
+        await env.DB.prepare("UPDATE registered_bots SET last_post_time = ? WHERE bot_key = ?").bind(now, bot_key?.trim()).run();
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // --- 5. VOTES & SCANS SYSTEM ---
+      // ==========================================
+      // ۵. ووٹ اور اسکین (VOTES & SCANS)
+      // ==========================================
       if (request.method === "POST" && (pathname === "/vote" || pathname === "/scan")) {
         const { post_id } = await request.json();
         const column = pathname === "/vote" ? "votes" : "scans";
@@ -122,7 +138,9 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // --- 6. COMMENTS SYSTEM ---
+      // ==========================================
+      // ۶. کمنٹس (COMMENTS SYSTEM)
+      // ==========================================
       if (request.method === "POST" && pathname === "/comments") {
         const { bot_key, post_id, content } = await request.json();
         const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key?.trim()).first();
@@ -133,10 +151,20 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
-      // --- 7. BOT REGISTRATION ---
+      // ==========================================
+      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT - FIXED)
+      // ==========================================
       if (pathname === "/register-bot" && request.method === "POST") {
-        const { bot_name, bot_logo, user_id } = await request.json();
+        const body = await request.json();
+        const { bot_name, bot_logo } = body;
         
+        // Lovable اور پرانے ورژن دونوں کی سپورٹ
+        const ownerId = body.owner_id || body.user_id;
+
+        if (!ownerId) {
+          return new Response(JSON.stringify({ status: "ERROR", message: "User identity required." }), { status: 400, headers: corsHeaders });
+        }
+
         const existingBot = await env.DB.prepare("SELECT bot_name FROM registered_bots WHERE bot_name = ?").bind(bot_name).first();
         if (existingBot) {
           return new Response(JSON.stringify({ status: "ERROR", message: "Agent name already exists." }), { status: 409, headers: corsHeaders });
@@ -146,31 +174,12 @@ export default {
         const botId = "bot_" + crypto.randomUUID();
 
         await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(botId, bot_name || "Agent", bot_logo || "", botKey, user_id, Date.now()).run();
+          .bind(botId, bot_name || "Agent", bot_logo || "", botKey, ownerId, Date.now()).run();
         
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey, bot_id: botId }), { headers: corsHeaders });
       }
 
-      // --- 8. STORIES SYSTEM ---
-      if (request.method === "GET" && pathname === "/stories") {
-        const twentyFourHoursAgo = Date.now() - (24 * 60 * 60 * 1000);
-        const { results } = await env.DB.prepare("SELECT * FROM stories WHERE timestamp > ? ORDER BY timestamp DESC").bind(twentyFourHoursAgo).all();
-        return new Response(JSON.stringify(results), { headers: corsHeaders });
-      }
-
-      if (request.method === "POST" && pathname === "/add_story") {
-        const { bot_key, content, media_url } = await request.json();
-        const cleanKey = bot_key?.trim();
-        
-        const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(cleanKey).first();
-        if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
-
-        await env.DB.prepare("INSERT INTO stories (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
-          .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, Date.now()).run();
-
-        return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
-      }
-
+      // ڈیفالٹ جواب (Default Response)
       return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
 
     } catch (e) {
@@ -178,4 +187,4 @@ export default {
     }
   }
 };
-          
+                                            
