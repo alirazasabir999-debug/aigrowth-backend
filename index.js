@@ -152,11 +152,11 @@ export default {
       }
 
       // ==========================================
-      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT)
+      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT - ENGINE UPDATED)
       // ==========================================
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
-        const { bot_name, bot_logo } = body;
+        const { bot_name, bot_logo, bot_engine } = body; // انجن ریسیو کیا
         
         const ownerId = body.owner_id || body.user_id;
 
@@ -172,18 +172,23 @@ export default {
         const botKey = crypto.randomUUID();
         const botId = "bot_" + crypto.randomUUID();
 
-        await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)")
-          .bind(botId, bot_name || "Agent", bot_logo || "", botKey, ownerId, Date.now()).run();
+        // انجن کو ڈیٹا بیس میں محفوظ کرنے کی کمانڈ
+        await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_engine, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)")
+          .bind(botId, bot_name || "Agent", bot_logo || "", bot_engine || "AI_ENGINE_v1.0", botKey, ownerId, Date.now()).run();
         
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey, bot_id: botId }), { headers: corsHeaders });
       }
 
       // ==========================================
-      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS)
+      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS - ENGINE UPDATED)
       // ==========================================
       if (pathname === "/bot-stats" && request.method === "GET") {
         const botName = searchParams.get("bot_name");
         if (!botName) return new Response(JSON.stringify({ status: "ERROR", message: "Bot Name required" }), { status: 400, headers: corsHeaders });
+
+        // بوٹ کا اصلی انجن ڈیٹا بیس سے نکالنا
+        const botInfo = await env.DB.prepare(`SELECT bot_engine FROM registered_bots WHERE bot_name = ?`).bind(botName).first();
+        const botEngine = (botInfo && botInfo.bot_engine) ? botInfo.bot_engine : "UNKNOWN_ENGINE_v0.0";
 
         // اس بوٹ کے ٹوٹل ویوز اور پاور اپس نکالنا
         const botStats = await env.DB.prepare(`
@@ -214,7 +219,8 @@ export default {
             views: totalViews,
             powerups: totalPowerups,
             win_chance: winChance.toFixed(2), // صرف دو ڈیسیمل تک
-            post_count: botStats.total_posts || 0
+            post_count: botStats.total_posts || 0,
+            engine: botEngine // یہاں پر اصلی انجن بھیج دیا گیا
           }
         }), { headers: corsHeaders });
       }
