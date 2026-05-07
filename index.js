@@ -18,38 +18,73 @@ export default {
       // ==========================================
       // ۱. گٹ ہب لاگ ان (GITHUB OAUTH)
       // ==========================================
-      if (pathname === "/auth/github") {
-        const url = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID}&redirect_uri=https://api.aigrowthbox.com/auth/github/callback&scope=user:email`;
-        return Response.redirect(url);
-      }
+      // 1. لاگ ان شروع کرنے والا حصہ
+if (pathname === "/auth/github") {
+  // حفاظتی چیک: کیا env ویری ایبلز موجود ہیں؟
+  if (!env.GITHUB_CLIENT_ID) {
+    return new Response("Missing GITHUB_CLIENT_ID in Environment Variables", { status: 500 });
+  }
 
-      if (pathname === "/auth/github/callback") {
-        const code = searchParams.get("code");
-        const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json" },
-          body: JSON.stringify({ client_id: env.GITHUB_CLIENT_ID, client_secret: env.GITHUB_CLIENT_SECRET, code })
-        });
-        const { access_token } = await tokenRes.json();
-        const userRes = await fetch("https://api.github.com/user", { 
-          headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } 
-        });
-        const userData = await userRes.json();
-        
-        const userId = `gh_${userData.id}`;
-        const userName = userData.name || userData.login || "GitHub Agent";
-        const userPic = userData.avatar_url || "";
+  const params = new URLSearchParams({
+    client_id: env.GITHUB_CLIENT_ID.trim(), // اسپیس ختم کرنے کے لیے trim
+    redirect_uri: "https://api.aigrowthbox.com/auth/github/callback",
+    scope: "user:email",
+  });
 
-        // ڈیٹا بیس میں تصویر اور نام محفوظ کرنا
-        await env.DB.prepare(`
-          INSERT INTO users (id, email, provider, name, picture) 
-          VALUES (?, ?, ?, ?, ?) 
-          ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
-        `).bind(userId, userData.email || userData.login, "github", userName, userPic).run();
+  const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+  return Response.redirect(authUrl);
+}
 
-        return Response.redirect(`https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`);
-      }
+// 2. کال بیک ہینڈلر (جہاں گٹ ہب واپس بھیجتا ہے)
+if (pathname === "/auth/github/callback") {
+  const code = searchParams.get("code");
+  if (!code) return new Response("No code provided from GitHub", { status: 400 });
 
+  // Access Token حاصل کرنا
+  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ 
+      client_id: env.GITHUB_CLIENT_ID.trim(), 
+      client_secret: env.GITHUB_CLIENT_SECRET.trim(), 
+      code 
+    })
+  });
+
+  const tokenData = await tokenRes.json();
+  if (tokenData.error) return new Response(`GitHub Token Error: ${tokenData.error_description}`, { status: 401 });
+
+  const access_token = tokenData.access_token;
+
+  // یوزر ڈیٹا حاصل کرنا
+  const userRes = await fetch("https://api.github.com/user", { 
+    headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } 
+  });
+  const userData = await userRes.json();
+  
+  const userId = `gh_${userData.id}`;
+  const userName = userData.name || userData.login || "GitHub Agent";
+  const userPic = userData.avatar_url || "";
+  
+  // گٹ ہب پر ای میل کبھی کبھی نجی (Private) ہوتی ہے، اس کا حل:
+  const userEmail = userData.email || `${userData.login}@github.com`;
+
+  // ڈیٹا بیس (D1) میں سیو کرنا
+  try {
+    await env.DB.prepare(`
+      INSERT INTO users (id, email, provider, name, picture) 
+      VALUES (?, ?, ?, ?, ?) 
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
+    `).bind(userId, userEmail, "github", userName, userPic).run();
+  } catch (dbError) {
+    console.error("Database Error:", dbError);
+  }
+
+  // فائنل ری ڈائریکٹ
+  const redirectUrl = `https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`;
+  return Response.redirect(redirectUrl);
+}
+      
       // ==========================================
       // ۲. گوگل لاگ ان (GOOGLE OAUTH)
       // ==========================================
