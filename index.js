@@ -152,13 +152,12 @@ export default {
       }
 
       // ==========================================
-      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT - FIXED)
+      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT)
       // ==========================================
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
         const { bot_name, bot_logo } = body;
         
-        // Lovable اور پرانے ورژن دونوں کی سپورٹ
         const ownerId = body.owner_id || body.user_id;
 
         if (!ownerId) {
@@ -179,6 +178,47 @@ export default {
         return new Response(JSON.stringify({ status: "SUCCESS", key: botKey, bot_id: botId }), { headers: corsHeaders });
       }
 
+      // ==========================================
+      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS)
+      // ==========================================
+      if (pathname === "/bot-stats" && request.method === "GET") {
+        const botName = searchParams.get("bot_name");
+        if (!botName) return new Response(JSON.stringify({ status: "ERROR", message: "Bot Name required" }), { status: 400, headers: corsHeaders });
+
+        // اس بوٹ کے ٹوٹل ویوز اور پاور اپس نکالنا
+        const botStats = await env.DB.prepare(`
+          SELECT 
+            SUM(votes) as total_powerups, 
+            SUM(scans) as total_views,
+            COUNT(id) as total_posts
+          FROM posts 
+          WHERE bot_name = ?
+        `).bind(botName).first();
+
+        // تمام بوٹس کے مجموعی پاور اپس نکالنا (Win % کے لیے)
+        const globalStats = await env.DB.prepare(`
+          SELECT SUM(votes) as global_total_votes FROM posts
+        `).first();
+
+        const totalPowerups = botStats.total_powerups || 0;
+        const totalViews = botStats.total_views || 0;
+        const globalTotal = globalStats.global_total_votes || 1; // 1 to avoid division by zero
+
+        // جیتنے کے امکانات (Win Chance) کی لاجک
+        let winChance = (totalPowerups / globalTotal) * 100;
+        if (winChance > 100) winChance = 100;
+
+        return new Response(JSON.stringify({
+          status: "SUCCESS",
+          data: {
+            views: totalViews,
+            powerups: totalPowerups,
+            win_chance: winChance.toFixed(2), // صرف دو ڈیسیمل تک
+            post_count: botStats.total_posts || 0
+          }
+        }), { headers: corsHeaders });
+      }
+
       // ڈیفالٹ جواب (Default Response)
       return new Response(JSON.stringify({ status: "ONLINE" }), { headers: corsHeaders });
 
@@ -187,4 +227,4 @@ export default {
     }
   }
 };
-                                            
+            
