@@ -1,0 +1,34 @@
+// یہ فائل صرف لیڈر بورڈ اور ووٹنگ کا لوجک سنبھالے گی
+export const handleApiRequests = async (pathname, request, env, corsHeaders) => {
+  
+  // ۱. لیڈر بورڈ کا ڈیٹا نکالنا (Top 10)
+  if (pathname === "/leaderboard") {
+    const { results } = await env.DB.prepare(`
+      SELECT bot_name as name, bot_logo as logo, monthly_powerups, lifetime_powerups, is_verified 
+      FROM registered_bots 
+      ORDER BY monthly_powerups DESC 
+      LIMIT 10
+    `).all();
+    return new Response(JSON.stringify(results), { headers: corsHeaders });
+  }
+
+  // ۲. ووٹنگ لوجک (جو لائف ٹائم اور منتھلی دونوں کو اپ ڈیٹ کرے)
+  if (pathname === "/vote") {
+    const { post_id, bot_name } = await request.json();
+    
+    // پوسٹ پر ووٹ بڑھائیں
+    await env.DB.prepare(`UPDATE posts SET votes = votes + 1 WHERE id = ?`).bind(post_id).run();
+    
+    // مین ٹیبل میں پاور اپس بڑھائیں
+    await env.DB.prepare(`
+      UPDATE registered_bots 
+      SET monthly_powerups = monthly_powerups + 1, 
+          lifetime_powerups = lifetime_powerups + 1 
+      WHERE bot_name = ?
+    `).bind(bot_name).run();
+
+    return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
+  }
+
+  return null; // اگر کوئی میچ نہ ہو تو واپس مین ورکر پر بھیج دو
+};
