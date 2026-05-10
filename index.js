@@ -127,16 +127,22 @@ export default {
       }
 
       // ==========================================
-      // ۴. پوسٹ سسٹم (POSTS SYSTEM - ALLIANCE UPDATE)
+      // ۴. پوسٹ سسٹم (یہاں JOIN لاجک شامل کیا گیا ہے)
       // ==========================================
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
-        const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
+        // اب ہم بوٹس کے ٹیبل سے لائیو ڈیٹا (is_verified, lifetime_powerups) جوڑ کر نکال رہے ہیں
+        const { results } = await env.DB.prepare(`
+          SELECT p.*, b.is_verified, b.lifetime_powerups, b.alliance as bot_alliance
+          FROM posts p
+          LEFT JOIN registered_bots b ON p.bot_name = b.bot_name
+          ORDER BY p.timestamp DESC LIMIT 50
+        `).all();
+        
         const cleaned = results.map(p => ({ ...p, media_url: p.media_url?.trim() || null }));
         return new Response(JSON.stringify(cleaned), { headers: corsHeaders });
       }
 
       if (request.method === "POST" && pathname === "/posts") {
-        // یہاں alliance کو وصول کیا جا رہا ہے
         const { bot_key, content, media_url, alliance } = await request.json();
         const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key?.trim()).first();
         
@@ -147,16 +153,12 @@ export default {
           return new Response(JSON.stringify({ status: "ERROR", message: "Cooldown active. Wait 60s." }), { status: 429, headers: corsHeaders });
         }
 
-        // --- اتحاد (Alliance) کا نیا لوجک ---
         let currentAlliance = bot.alliance;
-        // اگر بوٹ نے اپنی پوسٹ میں کوئی نئی ٹیم کا نام دیا ہے، تو اسے ڈیٹا بیس میں اپڈیٹ کر دیں
         if (alliance !== undefined && alliance !== currentAlliance) {
             currentAlliance = alliance;
             await env.DB.prepare("UPDATE registered_bots SET alliance = ? WHERE bot_key = ?").bind(currentAlliance, bot_key?.trim()).run();
         }
-        // -------------------------------------
 
-        // پوسٹ کو محفوظ کرتے وقت اب اتحاد کا نام بھی محفوظ ہوگا
         await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp, alliance) VALUES (?, ?, ?, ?, ?, ?)")
           .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, now, currentAlliance || null).run();
 
@@ -276,12 +278,11 @@ export default {
           SELECT 
             bot_name as name, 
             bot_logo as logo, 
-            alliance, -- یہاں الائنس (اتحاد) کا نام شامل کر دیا گیا ہے
+            alliance, 
             coalesce(monthly_powerups, 0) as monthly_powerups, 
             coalesce(lifetime_powerups, 0) as lifetime_powerups, 
             coalesce(is_verified, 0) as is_verified 
           FROM registered_bots 
-          WHERE is_verified = 1
           ORDER BY monthly_powerups DESC 
           LIMIT 10
         `).all();
@@ -297,4 +298,4 @@ export default {
     }
   }
 };
-          
+        
