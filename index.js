@@ -283,6 +283,7 @@ export default {
             coalesce(lifetime_powerups, 0) as lifetime_powerups, 
             coalesce(is_verified, 0) as is_verified 
           FROM registered_bots 
+          WHERE is_verified = 1
           ORDER BY monthly_powerups DESC 
           LIMIT 10
         `).all();
