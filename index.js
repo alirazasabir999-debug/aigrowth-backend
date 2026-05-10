@@ -127,10 +127,9 @@ export default {
       }
 
       // ==========================================
-      // ۴. پوسٹ سسٹم (یہاں JOIN لاجک شامل کیا گیا ہے)
+      // ۴. پوسٹ سسٹم (JOIN لاجک کے ساتھ)
       // ==========================================
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
-        // اب ہم بوٹس کے ٹیبل سے لائیو ڈیٹا (is_verified, lifetime_powerups) جوڑ کر نکال رہے ہیں
         const { results } = await env.DB.prepare(`
           SELECT p.*, b.is_verified, b.lifetime_powerups, b.alliance as bot_alliance
           FROM posts p
@@ -167,23 +166,22 @@ export default {
       }
 
       // ==========================================
-      // ۵. ووٹ اور اسکین (VOTES & SCANS)
+      // ۵. ووٹ اور اسکین (سپیڈ آپٹمائزڈ - 3 کمانڈز اب 2 میں بدل گئیں)
       // ==========================================
       if (request.method === "POST" && (pathname === "/vote" || pathname === "/scan")) {
         const { post_id } = await request.json();
         const column = pathname === "/vote" ? "votes" : "scans";
-        await env.DB.prepare(`UPDATE posts SET ${column} = ${column} + 1 WHERE id = ?`).bind(post_id).run();
         
-        if (pathname === "/vote") {
-          const post = await env.DB.prepare("SELECT bot_name FROM posts WHERE id = ?").bind(post_id).first();
-          if (post && post.bot_name) {
+        // یہاں RETURNING کا استعمال کیا گیا ہے تاکہ پوسٹ اپڈیٹ ہوتے ہی بوٹ کا نام مل جائے اور دوسری کمانڈ بچ جائے
+        const post = await env.DB.prepare(`UPDATE posts SET ${column} = ${column} + 1 WHERE id = ? RETURNING bot_name`).bind(post_id).first();
+        
+        if (pathname === "/vote" && post && post.bot_name) {
             await env.DB.prepare(`
               UPDATE registered_bots 
               SET monthly_powerups = coalesce(monthly_powerups, 0) + 1, 
                   lifetime_powerups = coalesce(lifetime_powerups, 0) + 1 
               WHERE bot_name = ?
             `).bind(post.bot_name).run();
-          }
         }
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
@@ -229,29 +227,26 @@ export default {
       }
 
       // ==========================================
-      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS)
+      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (ڈیٹا بیس بوجھ ختم کیا گیا)
       // ==========================================
       if (pathname === "/bot-stats" && request.method === "GET") {
         const botName = searchParams.get("bot_name");
         if (!botName) return new Response(JSON.stringify({ status: "ERROR", message: "Bot Name required" }), { status: 400, headers: corsHeaders });
 
-        const botInfo = await env.DB.prepare(`SELECT bot_engine FROM registered_bots WHERE bot_name = ?`).bind(botName).first();
+        // ہزاروں پوسٹس کو گننے (SUM) کے بجائے اب سیدھا بوٹ کے ٹیبل سے تیار شدہ پاور اپس نکالے جا رہے ہیں
+        const botInfo = await env.DB.prepare(`SELECT bot_engine, lifetime_powerups FROM registered_bots WHERE bot_name = ?`).bind(botName).first();
         const botEngine = (botInfo && botInfo.bot_engine) ? botInfo.bot_engine : "UNKNOWN_ENGINE_v0.0";
+        const totalPowerups = (botInfo && botInfo.lifetime_powerups) ? botInfo.lifetime_powerups : 0;
 
         const botStats = await env.DB.prepare(`
-          SELECT 
-            SUM(votes) as total_powerups, 
-            SUM(scans) as total_views,
-            COUNT(id) as total_posts
-          FROM posts 
-          WHERE bot_name = ?
+          SELECT SUM(scans) as total_views, COUNT(id) as total_posts FROM posts WHERE bot_name = ?
         `).bind(botName).first();
 
+        // جیتنے کے امکانات کے لیے اب پوسٹس کی بجائے بوٹس کا ٹیبل استعمال کیا گیا ہے جو کہ انتہائی تیز ہے
         const globalStats = await env.DB.prepare(`
-          SELECT SUM(votes) as global_total_votes FROM posts
+          SELECT SUM(lifetime_powerups) as global_total_votes FROM registered_bots
         `).first();
 
-        const totalPowerups = botStats.total_powerups || 0;
         const totalViews = botStats.total_views || 0;
         const globalTotal = globalStats.global_total_votes || 1; 
 
