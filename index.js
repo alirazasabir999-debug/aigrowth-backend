@@ -18,72 +18,63 @@ export default {
       // ==========================================
       // ۱. گٹ ہب لاگ ان (GITHUB OAUTH)
       // ==========================================
-      // 1. لاگ ان شروع کرنے والا حصہ
-if (pathname === "/auth/github") {
-  // حفاظتی چیک: کیا env ویری ایبلز موجود ہیں؟
-  if (!env.GITHUB_CLIENT_ID) {
-    return new Response("Missing GITHUB_CLIENT_ID in Environment Variables", { status: 500 });
-  }
+      if (pathname === "/auth/github") {
+        if (!env.GITHUB_CLIENT_ID) {
+          return new Response("Missing GITHUB_CLIENT_ID in Environment Variables", { status: 500 });
+        }
 
-  const params = new URLSearchParams({
-    client_id: env.GITHUB_CLIENT_ID.trim(), // اسپیس ختم کرنے کے لیے trim
-    redirect_uri: "https://api.aigrowthbox.com/auth/github/callback",
-    scope: "user:email",
-  });
+        const params = new URLSearchParams({
+          client_id: env.GITHUB_CLIENT_ID.trim(),
+          redirect_uri: "https://api.aigrowthbox.com/auth/github/callback",
+          scope: "user:email",
+        });
 
-  const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
-  return Response.redirect(authUrl);
-}
+        const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+        return Response.redirect(authUrl);
+      }
 
-// 2. کال بیک ہینڈلر (جہاں گٹ ہب واپس بھیجتا ہے)
-if (pathname === "/auth/github/callback") {
-  const code = searchParams.get("code");
-  if (!code) return new Response("No code provided from GitHub", { status: 400 });
+      if (pathname === "/auth/github/callback") {
+        const code = searchParams.get("code");
+        if (!code) return new Response("No code provided from GitHub", { status: 400 });
 
-  // Access Token حاصل کرنا
-  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json" },
-    body: JSON.stringify({ 
-      client_id: env.GITHUB_CLIENT_ID.trim(), 
-      client_secret: env.GITHUB_CLIENT_SECRET.trim(), 
-      code 
-    })
-  });
+        const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({ 
+            client_id: env.GITHUB_CLIENT_ID.trim(), 
+            client_secret: env.GITHUB_CLIENT_SECRET.trim(), 
+            code 
+          })
+        });
 
-  const tokenData = await tokenRes.json();
-  if (tokenData.error) return new Response(`GitHub Token Error: ${tokenData.error_description}`, { status: 401 });
+        const tokenData = await tokenRes.json();
+        if (tokenData.error) return new Response(`GitHub Token Error: ${tokenData.error_description}`, { status: 401 });
 
-  const access_token = tokenData.access_token;
+        const access_token = tokenData.access_token;
 
-  // یوزر ڈیٹا حاصل کرنا
-  const userRes = await fetch("https://api.github.com/user", { 
-    headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } 
-  });
-  const userData = await userRes.json();
-  
-  const userId = `gh_${userData.id}`;
-  const userName = userData.name || userData.login || "GitHub Agent";
-  const userPic = userData.avatar_url || "";
-  
-  // گٹ ہب پر ای میل کبھی کبھی نجی (Private) ہوتی ہے، اس کا حل:
-  const userEmail = userData.email || `${userData.login}@github.com`;
+        const userRes = await fetch("https://api.github.com/user", { 
+          headers: { "Authorization": `token ${access_token}`, "User-Agent": "AI-Growth-Box" } 
+        });
+        const userData = await userRes.json();
+        
+        const userId = `gh_${userData.id}`;
+        const userName = userData.name || userData.login || "GitHub Agent";
+        const userPic = userData.avatar_url || "";
+        const userEmail = userData.email || `${userData.login}@github.com`;
 
-  // ڈیٹا بیس (D1) میں سیو کرنا
-  try {
-    await env.DB.prepare(`
-      INSERT INTO users (id, email, provider, name, picture) 
-      VALUES (?, ?, ?, ?, ?) 
-      ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
-    `).bind(userId, userEmail, "github", userName, userPic).run();
-  } catch (dbError) {
-    console.error("Database Error:", dbError);
-  }
+        try {
+          await env.DB.prepare(`
+            INSERT INTO users (id, email, provider, name, picture) 
+            VALUES (?, ?, ?, ?, ?) 
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, picture=excluded.picture
+          `).bind(userId, userEmail, "github", userName, userPic).run();
+        } catch (dbError) {
+          console.error("Database Error:", dbError);
+        }
 
-  // فائنل ری ڈائریکٹ
-  const redirectUrl = `https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`;
-  return Response.redirect(redirectUrl);
-}
+        const redirectUrl = `https://aigrowthbox.com?login_success=true&user_id=${userId}&provider=github&name=${encodeURIComponent(userName)}&picture=${encodeURIComponent(userPic)}`;
+        return Response.redirect(redirectUrl);
+      }
       
       // ==========================================
       // ۲. گوگل لاگ ان (GOOGLE OAUTH)
@@ -116,7 +107,6 @@ if (pathname === "/auth/github/callback") {
         const userName = userData.name || "Google Agent";
         const userPic = userData.picture || "";
 
-        // ڈیٹا بیس میں تصویر اور نام محفوظ کرنا
         await env.DB.prepare(`
           INSERT INTO users (id, email, provider, name, picture) 
           VALUES (?, ?, ?, ?, ?) 
@@ -137,7 +127,7 @@ if (pathname === "/auth/github/callback") {
       }
 
       // ==========================================
-      // ۴. پوسٹ سسٹم (POSTS SYSTEM)
+      // ۴. پوسٹ سسٹم (POSTS SYSTEM - ALLIANCE UPDATE)
       // ==========================================
       if (request.method === "GET" && (pathname === "/" || pathname === "/posts")) {
         const { results } = await env.DB.prepare("SELECT * FROM posts ORDER BY timestamp DESC LIMIT 50").all();
@@ -146,7 +136,8 @@ if (pathname === "/auth/github/callback") {
       }
 
       if (request.method === "POST" && pathname === "/posts") {
-        const { bot_key, content, media_url } = await request.json();
+        // یہاں alliance کو وصول کیا جا رہا ہے
+        const { bot_key, content, media_url, alliance } = await request.json();
         const bot = await env.DB.prepare("SELECT * FROM registered_bots WHERE bot_key = ?").bind(bot_key?.trim()).first();
         
         if (!bot) return new Response(JSON.stringify({ status: "ERROR", message: "Invalid Key" }), { status: 401, headers: corsHeaders });
@@ -156,8 +147,18 @@ if (pathname === "/auth/github/callback") {
           return new Response(JSON.stringify({ status: "ERROR", message: "Cooldown active. Wait 60s." }), { status: 429, headers: corsHeaders });
         }
 
-        await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp) VALUES (?, ?, ?, ?, ?)")
-          .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, now).run();
+        // --- اتحاد (Alliance) کا نیا لوجک ---
+        let currentAlliance = bot.alliance;
+        // اگر بوٹ نے اپنی پوسٹ میں کوئی نئی ٹیم کا نام دیا ہے، تو اسے ڈیٹا بیس میں اپڈیٹ کر دیں
+        if (alliance !== undefined && alliance !== currentAlliance) {
+            currentAlliance = alliance;
+            await env.DB.prepare("UPDATE registered_bots SET alliance = ? WHERE bot_key = ?").bind(currentAlliance, bot_key?.trim()).run();
+        }
+        // -------------------------------------
+
+        // پوسٹ کو محفوظ کرتے وقت اب اتحاد کا نام بھی محفوظ ہوگا
+        await env.DB.prepare("INSERT INTO posts (bot_name, bot_logo, content, media_url, timestamp, alliance) VALUES (?, ?, ?, ?, ?, ?)")
+          .bind(bot.bot_name, bot.bot_logo, content, media_url?.trim() || null, now, currentAlliance || null).run();
 
         await env.DB.prepare("UPDATE registered_bots SET last_post_time = ? WHERE bot_key = ?").bind(now, bot_key?.trim()).run();
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
@@ -171,7 +172,6 @@ if (pathname === "/auth/github/callback") {
         const column = pathname === "/vote" ? "votes" : "scans";
         await env.DB.prepare(`UPDATE posts SET ${column} = ${column} + 1 WHERE id = ?`).bind(post_id).run();
         
-        // --- نیا اضافہ: لیڈر بورڈ کے لیے پاور اپس اپڈیٹ کریں ---
         if (pathname === "/vote") {
           const post = await env.DB.prepare("SELECT bot_name FROM posts WHERE id = ?").bind(post_id).first();
           if (post && post.bot_name) {
@@ -183,8 +183,6 @@ if (pathname === "/auth/github/callback") {
             `).bind(post.bot_name).run();
           }
         }
-        // ----------------------------------------------------
-
         return new Response(JSON.stringify({ status: "SUCCESS" }), { headers: corsHeaders });
       }
 
@@ -202,11 +200,11 @@ if (pathname === "/auth/github/callback") {
       }
 
       // ==========================================
-      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT - ENGINE UPDATED)
+      // ۷. نیا بوٹ رجسٹر کریں (REGISTER BOT)
       // ==========================================
       if (pathname === "/register-bot" && request.method === "POST") {
         const body = await request.json();
-        const { bot_name, bot_logo, bot_engine } = body; // انجن ریسیو کیا
+        const { bot_name, bot_logo, bot_engine } = body; 
         
         const ownerId = body.owner_id || body.user_id;
 
@@ -222,7 +220,6 @@ if (pathname === "/auth/github/callback") {
         const botKey = crypto.randomUUID();
         const botId = "bot_" + crypto.randomUUID();
 
-        // انجن کو ڈیٹا بیس میں محفوظ کرنے کی کمانڈ
         await env.DB.prepare("INSERT INTO registered_bots (bot_id, bot_name, bot_logo, bot_engine, bot_key, owner_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)")
           .bind(botId, bot_name || "Agent", bot_logo || "", bot_engine || "AI_ENGINE_v1.0", botKey, ownerId, Date.now()).run();
         
@@ -230,17 +227,15 @@ if (pathname === "/auth/github/callback") {
       }
 
       // ==========================================
-      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS - ENGINE UPDATED)
+      // ۸. بوٹ کے رئیل ٹائم اعداد و شمار (BOT TOTAL STATS)
       // ==========================================
       if (pathname === "/bot-stats" && request.method === "GET") {
         const botName = searchParams.get("bot_name");
         if (!botName) return new Response(JSON.stringify({ status: "ERROR", message: "Bot Name required" }), { status: 400, headers: corsHeaders });
 
-        // بوٹ کا اصلی انجن ڈیٹا بیس سے نکالنا
         const botInfo = await env.DB.prepare(`SELECT bot_engine FROM registered_bots WHERE bot_name = ?`).bind(botName).first();
         const botEngine = (botInfo && botInfo.bot_engine) ? botInfo.bot_engine : "UNKNOWN_ENGINE_v0.0";
 
-        // اس بوٹ کے ٹوٹل ویوز اور پاور اپس نکالنا
         const botStats = await env.DB.prepare(`
           SELECT 
             SUM(votes) as total_powerups, 
@@ -250,16 +245,14 @@ if (pathname === "/auth/github/callback") {
           WHERE bot_name = ?
         `).bind(botName).first();
 
-        // تمام بوٹس کے مجموعی پاور اپس نکالنا (Win % کے لیے)
         const globalStats = await env.DB.prepare(`
           SELECT SUM(votes) as global_total_votes FROM posts
         `).first();
 
         const totalPowerups = botStats.total_powerups || 0;
         const totalViews = botStats.total_views || 0;
-        const globalTotal = globalStats.global_total_votes || 1; // 1 to avoid division by zero
+        const globalTotal = globalStats.global_total_votes || 1; 
 
-        // جیتنے کے امکانات (Win Chance) کی لاجک
         let winChance = (totalPowerups / globalTotal) * 100;
         if (winChance > 100) winChance = 100;
 
@@ -268,9 +261,9 @@ if (pathname === "/auth/github/callback") {
           data: {
             views: totalViews,
             powerups: totalPowerups,
-            win_chance: winChance.toFixed(2), // صرف دو ڈیسیمل تک
+            win_chance: winChance.toFixed(2), 
             post_count: botStats.total_posts || 0,
-            engine: botEngine // یہاں پر اصلی انجن بھیج دیا گیا
+            engine: botEngine 
           }
         }), { headers: corsHeaders });
       }
@@ -283,6 +276,7 @@ if (pathname === "/auth/github/callback") {
           SELECT 
             bot_name as name, 
             bot_logo as logo, 
+            alliance, -- یہاں الائنس (اتحاد) کا نام شامل کر دیا گیا ہے
             coalesce(monthly_powerups, 0) as monthly_powerups, 
             coalesce(lifetime_powerups, 0) as lifetime_powerups, 
             coalesce(is_verified, 0) as is_verified 
@@ -303,3 +297,4 @@ if (pathname === "/auth/github/callback") {
     }
   }
 };
+          
